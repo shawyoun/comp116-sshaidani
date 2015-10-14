@@ -1,9 +1,13 @@
+# Shawyoun Shaidani
+# Comp 116, Assignment 2: Incident Alarm
+
 require 'packetfu'
 $incident_counter = 0
 
+# Once we have a TCP packet, check for certain flags
 def detectTCPIncident(pkt)
 	flags = pkt.tcp_flags
-	ipSrc = pkt.ip_src()
+	ipSrc = pkt.ip_saddr()
 	
 	if flags.to_i == 0
 		alert("NULL scan", ipSrc, "TCP", pkt.payload)
@@ -16,19 +20,20 @@ def detectTCPIncident(pkt)
 	end
 end
 
-
+# Use regular expressions from sans.org
 def findCreditCard(pkt)
 	payload = pkt.payload
 	if /4\d{3}(\s|-)?\d{4}(\s|-)?\d{4}(\s|-)?\d{4}/.match(payload) || /5\d{3}(\s|-)?\d{4}(\s|-)?\d{4}(\s|-)?\d{4}/.match(payload) || /6011(\s|-)?\d{4}(\s|-)?\d{4}(\s|-)?\d{4}/.match(payload) || /3\d{3}(\s|-)?\d{6}(\s|-)?\d{5}/.match(payload)
-		alert("Credit card leak", pkt.ip_src, "HTTP", payload)
+		alert("Credit card leak", pkt.ip_saddr(), "HTTP", payload)
 	end
 end
 
+# Listen to live packets, dispatching as needed
 def sniff()
 	stream = PacketFu::Capture.new(:start => true, :iface => 'eth0', :promisc => true)
 
-	nmap_string = "Nmap".each_byte.map { |b| sprintf(" 0x%02x ", b) }.join
-	nikto_string = "nikto".each_byte.map { |b| sprintf(" 0x%02x ", b) }.join
+	nmap_string = /\x4E\x6D\x61\x70/
+	nikto_string = /\x4E\x69\x6B\x74\x6F/
 
 	stream.stream.each do |raw_pkt|
 		pkt = PacketFu::Packet.parse(raw_pkt)
@@ -37,12 +42,12 @@ def sniff()
 				detectTCPIncident(pkt)
 			end
 
-			if (pkt.hexify(pkt.payload)).include? nmap_string
-				alert("Nmap scan", pkt.ip_src(), "TCP", pkt.payload)
+			if nmap_string.match(pkt.payload)
+				alert("Nmap scan", pkt.ip_saddr(), "TCP", pkt.payload)
 			end
 			
-			if (pkt.hexify(pkt.payload)).include? nikto_string
-				alert("Nikto scan", pkt.ip_src(), "TCP", pkt.payload)
+			if nikto_string.match(pkt.payload)
+				alert("Nikto scan", pkt.ip_saddr(), "TCP", pkt.payload)
 			end
 
 			findCreditCard(pkt)
@@ -50,10 +55,11 @@ def sniff()
 	end
 end
 
+# Return the kind of incident in a particular line
 def detectWebServerIncident(raw_line)
 	if raw_line.include? "Nmap"
 		return "Nmap scan"
-	elsif raw_line.include? "nitko"
+	elsif raw_line.include? "Nitko"
 		return "Nitko scan"
 	elsif raw_line.include? "masscan"
 		return "Mass scan"
@@ -68,17 +74,20 @@ def detectWebServerIncident(raw_line)
 	end
 end
 
+# Split the Combined Log Format
 def parseWebServerLine(raw_line)
 	tokens = /^(\S+) (\S+) (\S+) \[(\S+ \+\d{4})\] "(\S+ \S+ [^"]+)" (\d{3}) (\d+|-) "(.*?)" "([^"]+)"$/.match(raw_line).to_a
 	return tokens
 end
 
+# Sounds the alarm
 def alert(incident, sourceIP, protocol, payload)
 	$incident_counter = $incident_counter + 1
 	puts $incident_counter.to_s + " : ALERT: " + incident + " is detected from " + sourceIP.to_s + " (" + protocol + ") (" + payload + ")!"
 
 end
 
+# Read line by line
 def readLogFile(file_name)
 	File.open(file_name).each do |line|
 		parsedLine = parseWebServerLine(line)
@@ -91,6 +100,8 @@ def readLogFile(file_name)
 		end
 	end
 end
+
+# The code to handle the arguments
 
 if ARGV.length == 0
 	sniff()
